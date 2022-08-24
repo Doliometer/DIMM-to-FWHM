@@ -10,24 +10,34 @@ import numpy as np
 from astropy.io import fits
 from astropy.time import Time, TimeDelta
 from scipy.ndimage import gaussian_filter
+import astropy.units as u
+from astropy.coordinates import SkyCoord
 
-if len(sys.argv) < 3:
-    print('Usage: finding_maxima.py <base filename> <number files> <start index>')
-    sys.exit(  )
+star = SkyCoord('14h15m39.6720s', '+19d10m56.6730s', frame='icrs') # Arcturus
+#star = SkyCoord('18h36m56.33635s', '+38d47m01.2802s', frame='icrs') # Vega
+#star = SkyCoord(' 20h41m25.91514s', '+45d16m49.2197s', frame='icrs') # Deneb
 
 px2r = .0029/48/25.4 # pixels to radians for f/6 8" mirror with ASI290
 #px2r = .0024/48/25.4 # pixels to radians for f/6 8" mirror with ASI183
 r2as = 180 * 3600 / np.pi
 px2as = px2r * r2as
 print('Assuming ',px2as,' arcsecond units')
+
 cbdim = 5 #centroid box dims
 print('centroids computed on ',px2as*(2*cbdim+1),' arcsecond wide squares')
+
 lam=.0005 # mm following Tokovinin
 print('wavelength = ',lam*10**6,' nm')
+
 d = 5.5*25.4
 print('subaperture separation: ',d,' mm')
+
 D = 2*25.4
 print('subaperture diameter: ',D,' mm')
+
+if len(sys.argv) < 3:
+    print('Usage: finding_maxima.py <base filename> <number files> <start index>')
+    sys.exit(  )
 
 basefilename = sys.argv[1]
 files4analysis = int(sys.argv[2])
@@ -45,6 +55,7 @@ for i in range(files4analysis):
   if i == 0:
       tb = Time(hdul[0].header['DATE-OBS'])
       print('UTC start date of observation:\n',tb)
+      print('pixel width (microns)',1*hdul[0].header['PIXSIZE1'])
   if i == files4analysis - 1:
       te = Time(hdul[0].header['DATE-OBS'])
       print('UTC end date of observation:\n',te)
@@ -74,6 +85,11 @@ for i in range(files4analysis):
       continue
   #compute centroid around brightest pixel
   submtrx = imagedata[blrind[0]-cbdim:blrind[0]+cbdim+1,blrind[1]-cbdim:blrind[1]+cbdim+1]
+  for j in range(cbdim*2+1):  # compute centroid wrt disk around max point
+      for k in range(cbdim*2+1):
+          if (j-cbdim)**2+(k-cbdim)**2 > cbdim**2:
+              submtrx[j,k]=0
+  #print('centroid 1 submatrix:\n',submtrx)
   blrsubmtrx = blrimagedata[blrind[0]-cbdim:blrind[0]+cbdim+1,blrind[1]-cbdim:blrind[1]+cbdim+1]
   #print(blrsubmtrx)
   snr = np.amax(blrsubmtrx)/np.amin(blrsubmtrx)
@@ -93,7 +109,11 @@ for i in range(files4analysis):
       print('2nd maximum too close to window, frame ',i)
       continue
   submtrx = imagedata[blrind[0]-cbdim:blrind[0]+cbdim+1,blrind[1]-cbdim:blrind[1]+cbdim+1]
-  blrsubmtrx = blrimagedata[blrind[0]-cbdim:blrind[0]+cbdim+1,blrind[1]-cbdim:blrind[1]+cbdim+1]
+  for j in range(cbdim*2+1):  # compute centroid wrt disk around max point
+      for k in range(cbdim*2+1):
+          if (j-cbdim)**2+(k-cbdim)**2 > cbdim**2:
+              submtrx[j,k]=0
+  #print('centroid 1 submatrix:\n',submtrx)
   blrsubmtrx = blrimagedata[blrind[0]-cbdim:blrind[0]+cbdim+1,blrind[1]-cbdim:blrind[1]+cbdim+1]
   snr = np.amax(blrsubmtrx)/np.amin(blrsubmtrx)
   if snr < 1.5:
@@ -131,12 +151,24 @@ diffmtrx=rot_mtrx@diffmtrx
 vl,corr1,corr2,vt = np.ravel(np.cov(diffmtrx))
 print('correlation coefficient:\n',corr1/np.sqrt(vl*vt))
 b=d/D
-kl = .34*(1-.57/b**(1/3) - .04/b**(7/3)) # G-tilt constants from Tokovinin 2002
-kt = .34*(1-.855/b**(1/3) + .03/b**(7/3))
+kl = .364*(1-.532/b**(1/3) - .024/b**(7/3)) # Z-tilt constants from Tokovinin 2002
+kt = .364*(1-.798/b**(1/3) + .018/b**(7/3))
 print('proportionality constants:\nLongitudinal: ',kl,'; Transverse: ',kt)
 Fl = .98*(D/lam)**.2*(vl/kl)**.6
 Ft = .98*(D/lam)**.2*(vt/kt)**.6
 dt = te - tb
+ta = tb+.5*dt
 print('Length of observation run: ',dt.sec,' seconds')
 print('FWHM from longitudinal variance: ',Fl*r2as,' arcseconds')
 print('FWHM from transverse variance: ',Ft*r2as,' arcseconds')
+lon = -107.39*u.deg
+LST = ta.sidereal_time('mean', longitude=lon)
+print('sidereal time start of observation: ',LST)
+zenith=SkyCoord(LST,34.27*u.deg)
+print('zenith: ',zenith)
+print('star coordinates: ',star)
+sep = zenith.separation(star).radian
+print('separation: ',zenith.separation(star).deg)
+zadj = np.cos(sep)
+print('adjusted FWHM long: ',Fl*r2as*zadj**.6)
+print('adjusted FWHM tran: ',Ft*r2as*zadj**.6)
